@@ -1,0 +1,795 @@
+From 048152f0de301e866a7ce7403c8586c8dcaab92f Mon Sep 17 00:00:00 2001
+From: Insanity <emanuele.bonaventura@skylabs.it>
+Date: Mon, 28 Sep 2026 12:34:25 +0200
+Subject: [PATCH] feat(customization): Material (Google Messages) chat style on
+ top of Monet
+
+Adds the "Stile Material (chat)" toggle: bubbles, chat background, input bar,
+avatars and home list styled like Google Messages, with the palette derived
+from the system accent/neutral tonal palettes (MDC Hct).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../wppenhacer/xposed/core/FeatureLoader.kt   |   2 +
+ .../features/customization/BubbleColors.kt    |   1 +
+ .../features/customization/MaterialChat.kt    | 693 ++++++++++++++++++
+ app/src/main/res/values-it/strings.xml        |   2 +
+ app/src/main/res/values/strings.xml           |   2 +
+ .../main/res/xml/fragment_customization.xml   |   6 +
+ 6 files changed, 706 insertions(+)
+ create mode 100644 app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
+
+diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
+index 793b368c..a4e4a3d3 100644
+--- a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
++++ b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
+@@ -35,6 +35,7 @@ import com.wmods.wppenhacer.xposed.core.components.WaContactWpp
+ import com.wmods.wppenhacer.xposed.core.devkit.Unobfuscator
+ import com.wmods.wppenhacer.xposed.core.devkit.UnobfuscatorCache
+ import com.wmods.wppenhacer.xposed.features.customization.BubbleColors
++import com.wmods.wppenhacer.xposed.features.customization.MaterialChat
+ import com.wmods.wppenhacer.xposed.features.customization.ContactVerify
+ import com.wmods.wppenhacer.xposed.features.customization.CustomThemeV2
+ import com.wmods.wppenhacer.xposed.features.customization.CustomTime
+@@ -514,6 +515,7 @@ class FeatureLoader {
+                 CustomView::class.java,
+                 SeenTick::class.java,
+                 BubbleColors::class.java,
++                MaterialChat::class.java,
+                 CallPrivacy::class.java,
+                 ActivityController::class.java,
+                 CustomThemeV2::class.java,
+diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
+index 3e465025..b72d981e 100644
+--- a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
++++ b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
+@@ -24,6 +24,7 @@ class BubbleColors(loader: ClassLoader, preferences:SharedPreferences) :
+         val bubbleColor = prefs.getBoolean("bubble_color", false)
+ 
+         if (!bubbleColor && properties.getProperty("bubble_colors") != "true") return
++        if (MaterialChat.isEnabled(prefs)) return
+ 
+         val bubbleLeftColor = if (bubbleColor) prefs.getInt(
+             "bubble_left",
+diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
+new file mode 100644
+index 00000000..539af0de
+--- /dev/null
++++ b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
+@@ -0,0 +1,693 @@
++package com.wmods.wppenhacer.xposed.features.customization
++
++import android.annotation.SuppressLint
++import android.app.Activity
++import android.content.SharedPreferences
++import android.content.res.ColorStateList
++import android.content.res.Resources
++import android.graphics.Canvas
++import android.graphics.ColorFilter
++import android.graphics.Paint
++import android.graphics.PixelFormat
++import android.graphics.PorterDuff
++import android.graphics.PorterDuffColorFilter
++import android.graphics.Rect
++import android.graphics.RectF
++import android.graphics.drawable.Drawable
++import android.graphics.drawable.GradientDrawable
++import android.os.Build
++import android.view.View
++import android.widget.ImageView
++import android.widget.TextView
++import androidx.core.graphics.ColorUtils
++import com.google.android.material.color.utilities.Hct
++import com.google.android.material.color.utilities.TonalPalette
++import com.wmods.wppenhacer.xposed.core.Feature
++import com.wmods.wppenhacer.xposed.core.WppCore
++import com.wmods.wppenhacer.xposed.core.devkit.Unobfuscator
++import com.wmods.wppenhacer.xposed.utils.DesignUtils
++import com.wmods.wppenhacer.xposed.utils.Utils
++import de.robv.android.xposed.XC_MethodHook
++import de.robv.android.xposed.XposedBridge
++import de.robv.android.xposed.XposedHelpers
++import java.lang.reflect.Method
++
++/**
++ * Material You chat style (Google Messages like), on top of the Monet color mode:
++ * tail-less rounded bubbles (primaryContainer sent, surfaceContainer received) with matching
++ * text, ticks, quotes and voice notes, a surface chat sheet with rounded top corners, plain
++ * date separators, a pill input bar and a tonal send button. Colors follow theme changes live.
++ */
++class MaterialChat(loader: ClassLoader, preferences: SharedPreferences) :
++    Feature(loader, preferences) {
++
++    companion object {
++        private const val OUTGOING = 3
++
++        @JvmStatic
++        fun isEnabled(prefs: SharedPreferences): Boolean {
++            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
++                    && prefs.getBoolean("material_chat", false)
++                    && prefs.getBoolean("changecolor", false)
++                    && prefs.getString("changecolor_mode", "manual") == "monet"
++        }
++
++        /**
++         * Current system palette. Read at draw time by the bubbles too (WhatsApp caches them),
++         * so a wallpaper / theme change is followed without restarting WhatsApp.
++         */
++        @Volatile
++        lateinit var palette: Palette
++    }
++
++    override fun doHook() {
++        if (!isEnabled(prefs)) return
++        palette = Palette.load()
++        BubbleDrawable.textId = Utils.getID("message_text", "id")
++        BubbleDrawable.dateId = Utils.getID("date", "id")
++        hookBubbles()
++        hookRowDraw()
++        hookWallpaper()
++        hookAccentColors()
++        hookScrollButton()
++        hookVoiceNoteSeekBar()
++        WppCore.addListenerActivity { activity, type ->
++            if (activity.javaClass.simpleName == "Conversation") {
++                if (type == WppCore.ActivityChangeState.ChangeType.RESUMED) inConversation = true
++                if (type == WppCore.ActivityChangeState.ChangeType.PAUSED) inConversation = false
++            }
++            if (type != WppCore.ActivityChangeState.ChangeType.CREATED
++                && type != WppCore.ActivityChangeState.ChangeType.RESUMED
++            ) return@addListenerActivity
++            try {
++                // the theme may have changed while WhatsApp was in background
++                val current = Palette.load()
++                if (current != palette) {
++                    palette = current
++                    activity.window?.decorView?.invalidateRecursive()
++                }
++                if (activity.javaClass.simpleName == "Conversation") styleConversation(activity)
++                if (WppCore.homeActivityClass.isInstance(activity)) {
++                    styleHome(activity)
++                    // tab fragments attach after onResume
++                    activity.window?.decorView?.postDelayed({ styleHome(activity) }, 400)
++                }
++            } catch (e: Throwable) {
++                log(e)
++            }
++        }
++    }
++
++    @Volatile
++    private var inConversation = false
++
++    /** Nesting depth of TextView.onDraw on the UI thread. */
++    private var textDrawDepth = 0
++
++    /** (played, to play) colors while a voice note seek bar is drawing, null otherwise. */
++    private var voiceNoteColors: Pair<Int, Int>? = null
++
++    /** The voice note seek bar paints dot and waveform itself, without drawables to tint. */
++    private fun hookVoiceNoteSeekBar() {
++        val seekBar = XposedHelpers.findClassIfExists(
++            "com.whatsapp.voicerecorder.VoiceNoteSeekBar", classLoader
++        ) ?: return log("VoiceNoteSeekBar not found")
++        XposedBridge.hookMethod(findOnDraw(seekBar) ?: return, object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                if (!seekBar.isInstance(param.thisObject)) return
++                val outgoing = XposedHelpers.getAdditionalInstanceField(param.thisObject, "wae_outgoing") as? Boolean ?: return
++                voiceNoteColors = if (outgoing) palette.onOutgoing to palette.onOutgoingVariant
++                else palette.onIncoming to palette.onIncomingVariant
++            }
++
++            override fun afterHookedMethod(param: MethodHookParam) {
++                voiceNoteColors = null
++            }
++        })
++    }
++
++    /**
++     * WhatsApp brand green ("read more") and link blue are painted by text spans in the chat,
++     * where CustomThemeV2 does not remap colors: turn them into the palette accent. Limited to
++     * text drawing, so stickers and other artwork keep their own colors.
++     */
++    private fun hookAccentColors() {
++        val brandColors = intArrayOf(
++            0x21c063, 0x25d366, 0x1daa61, 0x00a884, 0x1da457, 0x1b864b, 0x008069, // greens
++            0x53bdeb, 0x027eb5, 0x007bfc, // links
++        )
++        XposedHelpers.findAndHookMethod(TextView::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                textDrawDepth++
++            }
++
++            override fun afterHookedMethod(param: MethodHookParam) {
++                textDrawDepth--
++            }
++        })
++        XposedHelpers.findAndHookMethod(Paint::class.java, "setColor", Int::class.javaPrimitiveType, object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                if (!inConversation) return
++                val voiceColors = voiceNoteColors
++                if (voiceColors != null) {
++                    // voice note progress: gray = still to play, colored = played
++                    val color = param.args[0] as Int
++                    val hsv = FloatArray(3)
++                    android.graphics.Color.colorToHSV(color, hsv)
++                    val target = if (hsv[1] < 0.25f) voiceColors.second else voiceColors.first
++                    val alpha = ((color ushr 24) * (target ushr 24)) / 255
++                    param.args[0] = (alpha shl 24) or (target and 0xffffff)
++                    return
++                }
++                if (textDrawDepth <= 0) return
++                val color = param.args[0] as Int
++                val rgb = color and 0xffffff
++                if (brandColors.none { it == rgb }) return
++                param.args[0] = (color and 0xff000000.toInt()) or (palette.accent and 0xffffff)
++            }
++        })
++    }
++
++    private fun View.invalidateRecursive() {
++        invalidate()
++        if (this is android.view.ViewGroup) for (i in 0 until childCount) getChildAt(i).invalidateRecursive()
++    }
++
++    private fun bubbleColor(outgoing: Boolean) =
++        if (outgoing) palette.outgoingBubble else palette.incomingBubble
++
++    private fun hookBubbles() {
++        // (direction, position in the group, pressed?, ?, ?) -> nine-patch bubble
++        XposedBridge.hookMethod(Unobfuscator.loadBubbleDrawableMethod(classLoader), object : XC_MethodHook() {
++            override fun afterHookedMethod(param: MethodHookParam) {
++                val original = param.result as? Drawable ?: return
++                if (original is BubbleDrawable) return
++                val outgoing = param.args[0] as? Int == OUTGOING
++                param.result = BubbleDrawable(original, outgoing)
++            }
++        })
++
++        XposedBridge.hookMethod(Unobfuscator.loadBallonDateDrawable(classLoader), object : XC_MethodHook() {
++            override fun afterHookedMethod(param: MethodHookParam) {
++                val drawable = param.result as? Drawable ?: return
++                drawable.colorFilter = PorterDuffColorFilter(
++                    bubbleColor(param.args[0] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
++                )
++            }
++        })
++        XposedBridge.hookMethod(Unobfuscator.loadBallonBorderDrawable(classLoader), object : XC_MethodHook() {
++            override fun afterHookedMethod(param: MethodHookParam) {
++                val drawable = param.result as? Drawable ?: return
++                drawable.colorFilter = PorterDuffColorFilter(
++                    bubbleColor(param.args[1] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
++                )
++            }
++        })
++    }
++
++    private fun findOnDraw(start: Class<*>): Method? {
++        var clazz: Class<*>? = start
++        while (clazz != null && clazz != View::class.java) {
++            clazz.declaredMethods.firstOrNull {
++                it.name == "onDraw" && it.parameterTypes.contentEquals(arrayOf(Canvas::class.java))
++            }?.let { return it }
++            clazz = clazz.superclass
++        }
++        return null
++    }
++
++    private val scrollBottomId by lazy { Utils.getID("scroll_bottom", "id") }
++
++    /** "Scroll to bottom" round button: a ViewStub, inflated the first time the chat scrolls. */
++    private fun hookScrollButton() {
++        XposedHelpers.findAndHookMethod(android.view.ViewStub::class.java, "inflate", object : XC_MethodHook() {
++            override fun afterHookedMethod(param: MethodHookParam) {
++                val view = param.result as? View ?: return
++                if (view.id == scrollBottomId) styleScrollButton(view)
++            }
++        })
++    }
++
++    private fun styleScrollButton(button: View) {
++        if (button is android.view.ViewStub) return
++        val chip = ColorStateList.valueOf(palette.chip)
++        button.backgroundTintList = chip
++        ((button as? android.view.ViewGroup)?.getChildAt(0) as? ImageView)?.let { arrow ->
++            arrow.backgroundTintList = chip
++            arrow.imageTintList = ColorStateList.valueOf(palette.onIncomingVariant)
++        }
++    }
++
++    private val statusId by lazy { Utils.getID("status", "id") }
++    private val actionButtonId by lazy { Utils.getID("action_button", "id") }
++
++    /**
++     * Delivery ticks (only on sent messages). WhatsApp tints them: translucent white while sent /
++     * delivered, blue once read. Keep that distinction with the bubble text color and the accent.
++     */
++    private fun styleTicks(row: View) {
++        val status = row.findViewById<View>(statusId) as? ImageView ?: return
++        val tint = status.imageTintList?.defaultColor ?: return
++        if (tint == palette.onOutgoingVariant || tint == palette.readTick) return
++        val hsv = FloatArray(3)
++        android.graphics.Color.colorToHSV(tint, hsv)
++        val read = hsv[1] > 0.3f
++        status.imageTintList = ColorStateList.valueOf(if (read) palette.readTick else palette.onOutgoingVariant)
++    }
++
++    /** Round forward / share button next to media and stickers. */
++    private fun styleActionButton(row: View) {
++        val button = row.findViewById<View>(actionButtonId) ?: return
++        if (button.backgroundTintList?.defaultColor == palette.chip) return
++        button.backgroundTintList = ColorStateList.valueOf(palette.chip)
++        (button as? TextView)?.compoundDrawableTintList = ColorStateList.valueOf(palette.onIncomingVariant)
++    }
++
++    /** Message rows draw their bubble in onDraw: remember the row so the bubble can recolor it. */
++    private fun hookRowDraw() {
++        val rowClass = Unobfuscator.loadConversationRowClass(classLoader) ?: return
++        val onDraw = findOnDraw(rowClass) ?: return log("row onDraw not found")
++        logDebug("row onDraw", onDraw)
++        XposedBridge.hookMethod(onDraw, object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                val row = param.thisObject as View
++                BubbleDrawable.drawingRow = row
++                styleTicks(row)
++                styleActionButton(row)
++            }
++
++            override fun afterHookedMethod(param: MethodHookParam) {
++                BubbleDrawable.drawingRow = null
++            }
++        })
++
++        // WhatsApp pads every row itself: a large value where a run of messages from the same
++        // sender starts or ends, a tiny one on the joined sides. Widen only the joined sides: the
++        // bubble is sized from the row, so consecutive bubbles get taller and airier.
++        val row = onDraw.declaringClass
++        val joinedMax = Utils.dipToPixels(3f)
++        val extra = BubbleDrawable.joinSpacing
++        val paddingHook = object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                if (!row.isInstance(param.thisObject)) return
++                for (i in intArrayOf(1, 3)) {
++                    val value = param.args[i] as Int
++                    if (value in 0..joinedMax) param.args[i] = value + extra
++                }
++            }
++        }
++        val int = Int::class.javaPrimitiveType
++        XposedHelpers.findAndHookMethod(View::class.java, "setPadding", int, int, int, int, paddingHook)
++        XposedHelpers.findAndHookMethod(View::class.java, "setPaddingRelative", int, int, int, int, paddingHook)
++    }
++
++    /**
++     * The chat wallpaper is a custom ImageView (WDSWallpaper) that starts below the toolbar:
++     * paint it as the Messages sheet, a surface panel with rounded top corners on the frame color.
++     */
++    private fun hookWallpaper() {
++        val wallpaperClass = XposedHelpers.findClassIfExists(
++            "com.whatsapp.ui.wds.components.wallpaper.WDSWallpaper", classLoader
++        ) ?: return log("WDSWallpaper not found")
++        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
++        val rect = RectF()
++        val radius = Utils.dipToPixels(28f).toFloat()
++        XposedBridge.hookMethod(findOnDraw(wallpaperClass) ?: return, object : XC_MethodHook() {
++            override fun beforeHookedMethod(param: MethodHookParam) {
++                if (!wallpaperClass.isInstance(param.thisObject)) return
++                val view = param.thisObject as View
++                val canvas = param.args[0] as Canvas
++                canvas.drawColor(palette.frame)
++                paint.color = palette.surface
++                // extend below the view so only the top corners are rounded
++                rect.set(0f, 0f, view.width.toFloat(), view.height + radius)
++                canvas.drawRoundRect(rect, radius, radius, paint)
++                param.result = null
++            }
++        })
++    }
++
++    private fun styleConversation(activity: Activity) {
++        activity.findViewById<View>(Utils.getID("conversation_background", "id"))?.invalidate()
++        // drawn above the wallpaper with the window color: it would hide the chat sheet
++        activity.findViewById<View>(Utils.getID("conversation_layout", "id"))?.background = null
++
++        activity.findViewById<View>(Utils.getID("toolbar", "id"))
++            ?.setBackgroundColor(palette.frame)
++        activity.window?.statusBarColor = palette.frame
++        activity.window?.navigationBarColor = palette.surface
++
++        activity.findViewById<View>(Utils.getID("footer", "id"))?.background = null
++        activity.findViewById<View>(Utils.getID("text_entry_layout", "id"))?.background = null
++
++        activity.findViewById<View>(Utils.getID("input_layout", "id"))?.let { input ->
++            input.background = GradientDrawable().apply {
++                cornerRadius = Utils.dipToPixels(28f).toFloat()
++                setColor(palette.inputBar)
++            }
++            input.backgroundTintList = null
++        }
++
++        activity.findViewById<View>(scrollBottomId)?.let { styleScrollButton(it) }
++
++        // Tonal round send / voice note button: the circle is the background of send_container
++        activity.findViewById<View>(Utils.getID("send_container", "id"))?.backgroundTintList =
++            ColorStateList.valueOf(palette.sendButton)
++        for (name in arrayOf("voice_note_btn", "send")) {
++            val button = activity.findViewById<View>(Utils.getID(name, "id")) as? ImageView ?: continue
++            button.imageTintList = ColorStateList.valueOf(palette.onSendButton)
++        }
++    }
++
++    /**
++     * Home like the Google Messages conversation list: toolbar, search and bars on the frame
++     * color, the chat list on the rounded surface sheet, tonal FABs and M3 navigation colors.
++     */
++    private fun styleHome(activity: Activity) {
++        fun find(name: String): View? = activity.findViewById(Utils.getID(name, "id"))
++        activity.window?.statusBarColor = palette.frame
++        activity.window?.navigationBarColor = palette.frame
++        find("root_view")?.setBackgroundColor(palette.frame)
++        for (name in arrayOf("header", "toolbar_container", "toolbar")) {
++            // flat top bar like Messages: no elevation shadow over the sheet
++            find(name)?.apply {
++                elevation = 0f
++                stateListAnimator = null
++                setBackgroundColor(palette.frame)
++                backgroundTintList = null
++            }
++        }
++        find("toolbar_logo")?.let { (it as? ImageView)?.imageTintList = ColorStateList.valueOf(palette.onIncoming) }
++
++        find("my_search_bar")?.apply {
++            setBackgroundColor(palette.frame)
++            backgroundTintList = null
++        }
++        find("search_bar_inner_layout")?.let { pill ->
++            if ((pill.background as? GradientDrawable)?.color?.defaultColor != palette.searchBar) {
++                pill.background = GradientDrawable().apply {
++                    cornerRadius = Utils.dipToPixels(28f).toFloat()
++                    setColor(palette.searchBar)
++                }
++                pill.backgroundTintList = null
++            }
++        }
++
++        // every tab list (chats, updates, calls...) sits on the sheet
++        (find("pager") as? android.view.ViewGroup)?.let { pager ->
++            val lists = ArrayList<View>()
++            pager.findViewsWithType(XposedHelpers.findClass("androidx.recyclerview.widget.RecyclerView", classLoader), lists)
++            for (list in lists) {
++                if ((list.background as? SheetDrawable)?.sheetColor != palette.surface) list.background = SheetDrawable(palette.surface)
++                // containers between the pager and the list show through above and below the sheet
++                var parent = list.parent as? View
++                while (parent != null && parent !== pager) {
++                    parent.setBackgroundColor(palette.frame)
++                    parent = parent.parent as? View
++                }
++            }
++        }
++
++        (find("fab") as? ImageView)?.let {
++            it.backgroundTintList = ColorStateList.valueOf(palette.fab)
++            it.imageTintList = ColorStateList.valueOf(palette.onFab)
++        }
++        find("extended_mini_fab")?.backgroundTintList = ColorStateList.valueOf(palette.chip)
++
++        (find("bottom_nav") as? android.view.ViewGroup)?.let { nav ->
++            nav.setBackgroundColor(palette.frame)
++            nav.backgroundTintList = null
++            val indicators = ArrayList<View>()
++            nav.findViewsWithId(Utils.getID("navigation_bar_item_active_indicator_view", "id"), indicators)
++            indicators.forEach { it.backgroundTintList = ColorStateList.valueOf(palette.navIndicator) }
++            val icons = ArrayList<View>()
++            nav.findViewsWithId(Utils.getID("navigation_bar_item_icon_view", "id"), icons)
++            val iconTint = ColorStateList(
++                arrayOf(intArrayOf(android.R.attr.state_selected), intArrayOf()),
++                intArrayOf(palette.onNavIndicator, palette.onIncomingVariant)
++            )
++            icons.forEach { (it as? ImageView)?.imageTintList = iconTint }
++        }
++    }
++
++    private fun android.view.ViewGroup.findViewsWithType(type: Class<*>, out: MutableList<View>) {
++        for (i in 0 until childCount) {
++            val child = getChildAt(i)
++            if (type.isInstance(child)) out.add(child)
++            else if (child is android.view.ViewGroup) child.findViewsWithType(type, out)
++        }
++    }
++
++    private fun View.findViewsWithId(id: Int, out: MutableList<View>) {
++        if (this.id == id) out.add(this)
++        if (this is android.view.ViewGroup) for (i in 0 until childCount) getChildAt(i).findViewsWithId(id, out)
++    }
++
++    /** Surface panel with rounded top corners, the "sheet" of Google Messages. */
++    class SheetDrawable(val sheetColor: Int) : GradientDrawable() {
++        init {
++            val r = Utils.dipToPixels(28f).toFloat()
++            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
++            setColor(sheetColor)
++        }
++    }
++
++    override fun getPluginName(): String = "Material Chat"
++
++    /** Color roles as used by Google Messages (measured on its conversation screen). */
++    data class Palette(
++        /** Toolbar, status bar and the frame around the chat sheet (surfaceContainer). */
++        val frame: Int,
++        /** Chat sheet behind the bubbles (surface). */
++        val surface: Int,
++        val outgoingBubble: Int,
++        val onOutgoing: Int,
++        val onOutgoingVariant: Int,
++        val incomingBubble: Int,
++        val onIncoming: Int,
++        val onIncomingVariant: Int,
++        val inputBar: Int,
++        val sendButton: Int,
++        val onSendButton: Int,
++        /** Read receipt ticks, accent colored. */
++        val readTick: Int,
++        /** Links and WhatsApp green accents in the chat. */
++        val accent: Int,
++        /** Small round controls on the sheet (forward button). */
++        val chip: Int,
++        /** Home search pill. */
++        val searchBar: Int,
++        /** Main home FAB (Messages "Start chat") and its icon. */
++        val fab: Int,
++        val onFab: Int,
++        /** Bottom navigation selected indicator and its icon. */
++        val navIndicator: Int,
++        val onNavIndicator: Int,
++    ) {
++        companion object {
++            /**
++             * Same derivation as Google Messages: the standard Material 3 tones computed from the
++             * system tonal palettes. The system "role" colors are not used on purpose, some ROMs
++             * generate them with a more saturated scheme (e.g. primary_container #46a5ff).
++             */
++            @SuppressLint("RestrictedApi")
++            fun load(): Palette {
++                val night = DesignUtils.isNightMode()
++                fun palette(name: String): TonalPalette {
++                    val key = Hct.fromInt(systemColor("system_${name}_500"))
++                    return TonalPalette.fromHueAndChroma(key.hue, key.chroma)
++                }
++                val primary = palette("accent1")
++                val tertiary = palette("accent3")
++                val secondary = palette("accent2")
++                val suffix = if (night) "_dark" else "_light"
++                val neutral = palette("neutral1")
++                val neutralVariant = palette("neutral2")
++                fun tone(p: TonalPalette, dark: Int, light: Int) = p.tone(if (night) dark else light)
++
++                val surfaceContainer = tone(neutral, 12, 94)
++                val onOutgoing = tone(primary, 90, 10)
++                return Palette(
++                    frame = surfaceContainer,
++                    surface = tone(neutral, 6, 98),
++                    outgoingBubble = tone(primary, 30, 90),
++                    onOutgoing = onOutgoing,
++                    onOutgoingVariant = ColorUtils.setAlphaComponent(onOutgoing, 0xB8),
++                    incomingBubble = surfaceContainer,
++                    onIncoming = tone(neutral, 90, 10),
++                    onIncomingVariant = tone(neutralVariant, 80, 30),
++                    inputBar = surfaceContainer,
++                    sendButton = tone(tertiary, 30, 90),
++                    onSendButton = tone(tertiary, 90, 10),
++                    readTick = tone(primary, 80, 40),
++                    accent = tone(primary, 80, 40),
++                    chip = tone(neutral, 22, 90),
++                    searchBar = tone(neutral, 17, 92),
++                    // Messages takes its FAB from the system primaryContainer role
++                    fab = systemColor("system_primary_container" + suffix).takeIf { it != 0 } ?: tone(primary, 30, 90),
++                    onFab = systemColor("system_on_primary_container" + suffix).takeIf { it != 0 } ?: tone(primary, 90, 10),
++                    navIndicator = tone(secondary, 30, 90),
++                    onNavIndicator = tone(secondary, 90, 10),
++                )
++            }
++
++            @SuppressLint("DiscouragedApi")
++            private fun systemColor(name: String): Int {
++                val id = Resources.getSystem().getIdentifier(name, "color", "android")
++                if (id == 0) return 0
++                return try {
++                    Utils.application.getColor(id)
++                } catch (_: Throwable) {
++                    0
++                }
++            }
++        }
++    }
++
++    class QuoteBackground(val cardColor: Int) : GradientDrawable() {
++        init {
++            cornerRadius = Utils.dipToPixels(16f).toFloat()
++            setColor(cardColor)
++        }
++    }
++
++    /**
++     * Rounded rectangle that replaces the WhatsApp nine-patch bubble. It keeps the original
++     * padding (so the row layout does not move) and skips the area reserved for the tail.
++     * Every bubble is fully rounded, also inside a run of messages from the same sender.
++     * While drawing it also recolors the message text and time of its row.
++     */
++    class BubbleDrawable(
++        private val original: Drawable,
++        private val outgoing: Boolean,
++    ) : Drawable() {
++
++        companion object {
++            var textId = 0
++            var dateId = 0
++            val dividerId by lazy { Utils.getID("conversation_row_date_divider", "id") }
++            val quoteFrameId by lazy { Utils.getID("bubble_quoted_message_frame", "id") }
++            val quoteHolderId by lazy { Utils.getID("quoted_message_holder", "id") }
++            val quoteTextId by lazy { Utils.getID("quoted_text", "id") }
++            val audioPlayerId by lazy { Utils.getID("conversation_row_audio_player_view", "id") }
++            val controlButtonId by lazy { Utils.getID("control_btn", "id") }
++            val audioSeekbarId by lazy { Utils.getID("audio_seekbar", "id") }
++            val audioDescriptionId by lazy { Utils.getID("description", "id") }
++            val micOverlayId by lazy { Utils.getID("mic_overlay", "id") }
++
++            /** Row whose onDraw is running: the bubble is drawn by hand there, it has no callback. */
++            var drawingRow: View? = null
++
++            /** Extra padding added to the joined sides of a row (the bubble grows with the row). */
++            val joinSpacing by lazy { Utils.dipToPixels(2f) }
++        }
++
++        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
++        private val radius = Utils.dipToPixels(24f).toFloat()
++        private val originalPadding = Rect().also { original.getPadding(it) }
++        private val rect = RectF()
++
++        override fun draw(canvas: Canvas) {
++            val b = bounds
++            val tail = if (outgoing) originalPadding.right - originalPadding.left
++            else originalPadding.left - originalPadding.right
++            val inset = tail.coerceAtLeast(0).toFloat()
++            rect.set(b)
++            if (outgoing) rect.right -= inset else rect.left += inset
++            // the nine-patch keeps a transparent strip at the bottom as spacing between rows
++            rect.bottom -= (originalPadding.bottom - originalPadding.top).coerceAtLeast(0)
++            paint.color = if (outgoing) palette.outgoingBubble else palette.incomingBubble
++            paint.alpha = bubbleAlpha
++            canvas.drawRoundRect(rect, radius, radius, paint)
++            recolorRow()
++        }
++
++        private fun recolorRow() {
++            val row = drawingRow ?: return
++            val textColor = if (outgoing) palette.onOutgoing else palette.onIncoming
++            val variantColor = if (outgoing) palette.onOutgoingVariant else palette.onIncomingVariant
++            (row.findViewById<View>(textId) as? TextView)?.let {
++                if (it.currentTextColor != textColor) it.setTextColor(textColor)
++            }
++            (row.findViewById<View>(dateId) as? TextView)?.let {
++                if (it.currentTextColor != variantColor) it.setTextColor(variantColor)
++            }
++            styleDateDivider(row)
++            styleQuote(row, textColor, variantColor)
++            styleVoiceNote(row, textColor, variantColor)
++        }
++
++        /** Voice note: play button, progress bar and duration in the bubble colors. */
++        private fun styleVoiceNote(row: View, textColor: Int, variantColor: Int) {
++            val player = row.findViewById<View>(audioPlayerId) ?: return
++            (player.findViewById<View>(controlButtonId) as? ImageView)?.let {
++                if (it.imageTintList?.defaultColor != textColor) it.imageTintList = ColorStateList.valueOf(textColor)
++            }
++            // the seek bar paints itself: tell its onDraw hook which bubble it sits in
++            player.findViewById<View>(audioSeekbarId)?.let {
++                if (XposedHelpers.getAdditionalInstanceField(it, "wae_outgoing") != outgoing) {
++                    XposedHelpers.setAdditionalInstanceField(it, "wae_outgoing", outgoing)
++                    it.invalidate()
++                }
++            }
++            (row.findViewById<View>(audioDescriptionId) as? TextView)?.let {
++                if (it.currentTextColor != variantColor) it.setTextColor(variantColor)
++            }
++            (row.findViewById<View>(micOverlayId) as? ImageView)?.let {
++                if (it.imageTintList?.defaultColor != palette.accent) it.imageTintList = ColorStateList.valueOf(palette.accent)
++            }
++        }
++
++        /** Day separator ("Today"): plain centered text like Google Messages, no chip. */
++        private fun styleDateDivider(row: View) {
++            val divider = row.findViewById<View>(dividerId) as? TextView ?: return
++            if (divider.background != null) divider.background = null
++            if (divider.currentTextColor != palette.onIncomingVariant) {
++                divider.setTextColor(palette.onIncomingVariant)
++            }
++        }
++
++        /** Replied message: tonal rounded card inside the bubble, the sender bar clipped by it. */
++        private fun styleQuote(row: View, textColor: Int, variantColor: Int) {
++            val frame = row.findViewById<View>(quoteFrameId) ?: return
++            val bubble = if (outgoing) palette.outgoingBubble else palette.incomingBubble
++            val cardColor = ColorUtils.blendARGB(bubble, textColor, 0.10f)
++            if ((frame.background as? QuoteBackground)?.cardColor != cardColor) {
++                frame.background = QuoteBackground(cardColor)
++                frame.clipToOutline = true
++                row.findViewById<View>(quoteHolderId)?.background = null
++            }
++            (row.findViewById<View>(quoteTextId) as? TextView)?.let {
++                if (it.currentTextColor != variantColor) it.setTextColor(variantColor)
++            }
++        }
++
++        override fun getPadding(padding: Rect): Boolean {
++            padding.set(originalPadding)
++            return true
++        }
++
++        override fun onBoundsChange(bounds: Rect) {
++            original.bounds = bounds
++        }
++
++        override fun getIntrinsicWidth(): Int = original.intrinsicWidth
++        override fun getIntrinsicHeight(): Int = original.intrinsicHeight
++        override fun getMinimumWidth(): Int = original.minimumWidth
++        override fun getMinimumHeight(): Int = original.minimumHeight
++
++        private var bubbleAlpha = 255
++
++        override fun getAlpha(): Int = bubbleAlpha
++
++        override fun setAlpha(alpha: Int) {
++            bubbleAlpha = alpha
++        }
++
++        // WhatsApp tints the bubble with a color filter: keep the palette color.
++        override fun setColorFilter(colorFilter: ColorFilter?) {}
++
++        @Deprecated("Deprecated in Java")
++        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
++    }
++}
+diff --git a/app/src/main/res/values-it/strings.xml b/app/src/main/res/values-it/strings.xml
+index 31d86dbe..f5f4a9fc 100644
+--- a/app/src/main/res/values-it/strings.xml
++++ b/app/src/main/res/values-it/strings.xml
+@@ -35,6 +35,8 @@
+     <string name="changecolor_mode">Sorgente colore</string>
+     <string name="changecolor_mode_manual">Selettore colore</string>
+     <string name="changecolor_mode_monet">Automatico (Monet, Android 12+)</string>
++    <string name="material_chat">Stile Material per le chat</string>
++    <string name="material_chat_sum">Con la modalità Monet, ridisegna la chat come Google Messaggi: bolle arrotondate senza codina, sfondo in tinta unita, barra di scrittura a pillola</string>
+     <string name="general">Generale</string>
+     <string name="restart_whatsapp">Riavvia WhatsApp</string>
+     <string name="conversation">Conversazione</string>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 61a0c95a..04863ed3 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -37,6 +37,8 @@
+     <string name="changecolor_mode">Color source</string>
+     <string name="changecolor_mode_manual">Color picker</string>
+     <string name="changecolor_mode_monet">Automatic (Monet, Android 12+)</string>
++    <string name="material_chat">Material chat style</string>
++    <string name="material_chat_sum">With the Monet mode, restyles the chat like Google Messages: rounded bubbles without tail, plain background, pill input bar</string>
+     <string name="general">General</string>
+     <string name="restart_whatsapp">Restart WhatsApp</string>
+     <string name="conversation">Conversation Screen</string>
+diff --git a/app/src/main/res/xml/fragment_customization.xml b/app/src/main/res/xml/fragment_customization.xml
+index 0e388e57..8790f202 100644
+--- a/app/src/main/res/xml/fragment_customization.xml
++++ b/app/src/main/res/xml/fragment_customization.xml
+@@ -20,6 +20,12 @@
+             app:summary="%s"
+             app:title="@string/changecolor_mode" />
+ 
++        <rikka.material.preference.MaterialSwitchPreference
++            app:dependency="changecolor"
++            app:key="material_chat"
++            app:summary="@string/material_chat_sum"
++            app:title="@string/material_chat" />
++
+         <com.wmods.wppenhacer.preference.FeatureColorPreferenceCompat
+             app:cpv_showAlphaSlider="true"
+             app:dependency="changecolor"

@@ -17,7 +17,7 @@ on:
         default: false
   push:
     branches: [main]
-    paths: ['patches/**']
+    paths: ['patches/**', '.github/workflows/build.yml']
 
 permissions:
   contents: write
@@ -105,6 +105,21 @@ jobs:
           OPEN=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" --json number --jq 'length')
           if [ "$OPEN" = "0" ]; then
             gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue.md
+          fi
+
+      - name: Stamp release tag into versionName
+        if: steps.up.outputs.skip == 'false'
+        working-directory: upstream
+        run: |
+          # The in-app update checks (patched to read this repo's releases) look for
+          # the release tag in versionName; our commit hash differs from the upstream
+          # one, so without this they would always report an update.
+          OUR_TAG="${{ steps.up.outputs.our_tag }}"
+          if [ "$(grep -c -E '^\s*versionName = "[^"]*"' app/build.gradle.kts)" = "1" ]; then
+            sed -i -E "s/^(\s*versionName = \"[^\"]*)(\")/\1 $OUR_TAG\2/" app/build.gradle.kts
+            grep -E '^\s*versionName' app/build.gradle.kts
+          else
+            echo "::warning::versionName not found: the app will keep reporting an update"
           fi
 
       - uses: actions/setup-java@v5

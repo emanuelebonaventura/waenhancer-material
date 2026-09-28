@@ -1,8 +1,8 @@
 From 048152f0de301e866a7ce7403c8586c8dcaab92f Mon Sep 17 00:00:00 2001
 From: Insanity <emanuele.bonaventura@skylabs.it>
 Date: Mon, 28 Sep 2026 12:34:25 +0200
-Subject: [PATCH] feat(customization): Material (Google Messages) chat style on
- top of Monet
+Subject: [PATCH 1/2] feat(customization): Material (Google Messages) chat
+ style on top of Monet
 
 Adds the "Stile Material (chat)" toggle: bubbles, chat background, input bar,
 avatars and home list styled like Google Messages, with the palette derived

@@ -1,4 +1,4 @@
-From 048152f0de301e866a7ce7403c8586c8dcaab92f Mon Sep 17 00:00:00 2001
+From 5628e30789dba40170b8421f6a5f521be0c46b79 Mon Sep 17 00:00:00 2001
 From: Insanity <emanuele.bonaventura@skylabs.it>
 Date: Mon, 28 Sep 2026 12:34:25 +0200
 Subject: [PATCH 1/2] feat(customization): Material (Google Messages) chat
@@ -10,7 +10,7 @@ from the system accent/neutral tonal palettes (MDC Hct).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../wppenhacer/xposed/core/FeatureLoader.kt   |   2 +
+ .../wppenhacer/xposed/core/FeatureRegistry.kt |   2 +
  .../features/customization/BubbleColors.kt    |   1 +
  .../features/customization/MaterialChat.kt    | 693 ++++++++++++++++++
  app/src/main/res/values-it/strings.xml        |   2 +
@@ -19,41 +19,41 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  6 files changed, 706 insertions(+)
  create mode 100644 app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
 
-diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
-index 793b368c..a4e4a3d3 100644
---- a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
-+++ b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureLoader.kt
-@@ -35,6 +35,7 @@ import com.wmods.wppenhacer.xposed.core.components.WaContactWpp
- import com.wmods.wppenhacer.xposed.core.devkit.Unobfuscator
- import com.wmods.wppenhacer.xposed.core.devkit.UnobfuscatorCache
+diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
+index 9aaebf25..67892f63 100644
+--- a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
++++ b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
+@@ -1,6 +1,7 @@
+ package com.wmods.wppenhacer.xposed.core
+ 
  import com.wmods.wppenhacer.xposed.features.customization.BubbleColors
 +import com.wmods.wppenhacer.xposed.features.customization.MaterialChat
  import com.wmods.wppenhacer.xposed.features.customization.ContactVerify
  import com.wmods.wppenhacer.xposed.features.customization.CustomThemeV2
  import com.wmods.wppenhacer.xposed.features.customization.CustomTime
-@@ -514,6 +515,7 @@ class FeatureLoader {
-                 CustomView::class.java,
-                 SeenTick::class.java,
-                 BubbleColors::class.java,
-+                MaterialChat::class.java,
-                 CallPrivacy::class.java,
-                 ActivityController::class.java,
-                 CustomThemeV2::class.java,
+@@ -79,6 +80,7 @@ internal object FeatureRegistry {
+         CustomView::class.java,
+         SeenTick::class.java,
+         BubbleColors::class.java,
++        MaterialChat::class.java,
+         CallPrivacy::class.java,
+         ActivityController::class.java,
+         CustomThemeV2::class.java,
 diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
-index 3e465025..b72d981e 100644
+index 24731a76..b9abd936 100644
 --- a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
 +++ b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/BubbleColors.kt
-@@ -24,6 +24,7 @@ class BubbleColors(loader: ClassLoader, preferences:SharedPreferences) :
-         val bubbleColor = prefs.getBoolean("bubble_color", false)
+@@ -22,6 +22,7 @@ class BubbleColors(loader: ClassLoader, preferences: SharedPreferences) :
+         val bubbleColor = xprefs.getBoolean("bubble_color", false)
  
          if (!bubbleColor && properties.getProperty("bubble_colors") != "true") return
-+        if (MaterialChat.isEnabled(prefs)) return
++        if (MaterialChat.isEnabled(xprefs)) return
  
-         val bubbleLeftColor = if (bubbleColor) prefs.getInt(
+         val bubbleLeftColor = if (bubbleColor) xprefs.getInt(
              "bubble_left",
 diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
 new file mode 100644
-index 00000000..539af0de
+index 00000000..722cfcd6
 --- /dev/null
 +++ b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
 @@ -0,0 +1,693 @@
@@ -120,7 +120,7 @@ index 00000000..539af0de
 +    }
 +
 +    override fun doHook() {
-+        if (!isEnabled(prefs)) return
++        if (!isEnabled(xprefs)) return
 +        palette = Palette.load()
 +        BubbleDrawable.textId = Utils.getID("message_text", "id")
 +        BubbleDrawable.dateId = Utils.getID("date", "id")

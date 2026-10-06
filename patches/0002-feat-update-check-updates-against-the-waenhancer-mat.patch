@@ -1,4 +1,4 @@
-From 7ea3867c1af4b2bc7ceedb89a38a2b55616c07b0 Mon Sep 17 00:00:00 2001
+From 59f41ae4441be6206a9c3efbe76e2f591c507bb3 Mon Sep 17 00:00:00 2001
 From: Insanity <emanuele.bonaventura@skylabs.it>
 Date: Mon, 28 Sep 2026 12:58:30 +0200
 Subject: [PATCH 2/2] feat(update): check updates against the
@@ -9,30 +9,31 @@ Dev4Mod's, and "Update" opens the release page instead of the Telegram channel.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt       | 4 ++--
- .../java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt    | 4 ++--
- 2 files changed, 4 insertions(+), 4 deletions(-)
+ app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt      | 5 +++--
+ .../java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt   | 4 ++--
+ 2 files changed, 5 insertions(+), 4 deletions(-)
 
 diff --git a/app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt b/app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt
-index d2c9d213..654774ea 100644
+index be56d6b9..80a4fdf0 100644
 --- a/app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt
 +++ b/app/src/main/java/com/wmods/wppenhacer/UpdateChecker.kt
-@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit
- class UpdateChecker(private val mActivity: Activity) : Runnable {
+@@ -16,8 +16,9 @@ class UpdateChecker(private val mActivity: Activity) : Runnable {
  
      companion object {
--        private const val LATEST_RELEASE_API = "https://api.github.com/repos/Dev4Mod/WaEnhancer/releases/latest"
+         private const val LATEST_RELEASE_API =
+-            "https://api.github.com/repos/Dev4Mod/WaEnhancer/releases/latest"
 -        private const val TELEGRAM_UPDATE_URL = "https://t.me/waenhancher"
-+        private const val LATEST_RELEASE_API = "https://api.github.com/repos/emanuelebonaventura/waenhancer-material/releases/latest"
-+        private const val TELEGRAM_UPDATE_URL = "https://github.com/emanuelebonaventura/waenhancer-material/releases/latest"
++            "https://api.github.com/repos/emanuelebonaventura/waenhancer-material/releases/latest"
++        private const val TELEGRAM_UPDATE_URL =
++            "https://github.com/emanuelebonaventura/waenhancer-material/releases/latest"
  
          private val httpClient: OkHttpClient by lazy {
              OkHttpClient.Builder()
 diff --git a/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt b/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
-index eb12bc03..2aab177e 100644
+index d460ba7d..a2cfc0a4 100644
 --- a/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
 +++ b/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
-@@ -118,7 +118,7 @@ class HomeFragment : BaseFragment() {
+@@ -119,7 +119,7 @@ class HomeFragment : BaseFragment() {
  
          binding.updateCard.setOnClickListener { view ->
              animateClick(view)
@@ -41,7 +42,7 @@ index eb12bc03..2aab177e 100644
          }
  
          binding.diagBtn.setOnClickListener { view ->
-@@ -454,7 +454,7 @@ class HomeFragment : BaseFragment() {
+@@ -496,7 +496,7 @@ class HomeFragment : BaseFragment() {
                      .build()
  
                  val request = Request.Builder()

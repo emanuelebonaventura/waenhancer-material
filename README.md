@@ -12,7 +12,7 @@ Il repository contiene solo le modifiche, come patch. Il codice di WaEnhancer vi
    - applica `patches/*.patch`;
    - compila `assembleWhatsappDebug` con la nostra chiave;
    - pubblica l'APK nelle **Releases** di questo repository.
-3. Se una patch non si applica più (upstream ha cambiato gli stessi file), non pubblica niente e apre una **issue** con i file in conflitto. Quando la build successiva riesce, la issue viene chiusa.
+3. Se una patch non si applica più (upstream ha cambiato gli stessi file), non pubblica niente e apre una **issue** con i file in conflitto. Se le patch si applicano ma la compilazione fallisce, apre una issue "Build fails on <tag>" con gli errori e la fine del log di Gradle (i log dei job li scaricano solo gli admin). Quando la build successiva riesce, le issue vengono chiuse.
 
 Il controllo aggiornamenti dell'app (popup in WhatsApp e scheda nella home) legge le release di **questo** repository. Per questo il repository deve essere **pubblico**: l'app interroga l'API di GitHub senza autenticazione. Il workflow scrive il tag della release nel `versionName` (per esempio `1.6.0 (7EA3867C) 1.6.0-a160ff41-material`), così l'app non segnala aggiornamenti finché non esce una nostra build nuova.
 

@@ -30,6 +30,7 @@ concurrency:
 env:
   UPSTREAM_REPO: Dev4Mod/waenhancer
   CONFLICT_TITLE_PREFIX: 'Patches do not apply on'
+  BUILD_FAILURE_TITLE_PREFIX: 'Build fails on'
 
 jobs:
   build:
@@ -157,11 +158,43 @@ jobs:
           } >> gradle.properties
 
       - name: Build
+        id: build
         if: steps.up.outputs.skip == 'false'
         working-directory: upstream
         run: |
+          set -o pipefail
           chmod +x gradlew
-          ./gradlew assembleWhatsappDebug -Pminify=true
+          ./gradlew assembleWhatsappDebug -Pminify=true 2>&1 | tee ../build.log
+
+      # Job logs can only be downloaded by repo admins: put the error where anyone can read it.
+      - name: Open build failure issue
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          TITLE="$BUILD_FAILURE_TITLE_PREFIX ${{ steps.up.outputs.tag }}"
+          {
+            echo "The build failed on upstream \`${{ steps.up.outputs.tag }}\` with the patches applied: no release was published."
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '**Errors**'
+            echo
+            echo '```'
+            grep -E '^e: |error:|FAILURE|What went wrong|Execution failed|> ' build.log | head -60
+            echo '```'
+            echo
+            echo '<details><summary>Last 150 lines of the Gradle log</summary>'
+            echo
+            echo '```'
+            tail -n 150 build.log
+            echo '```'
+            echo '</details>'
+          } > build-issue.md
+          OPEN=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" -R "$GITHUB_REPOSITORY" --body-file build-issue.md
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file build-issue.md
+          fi
 
       - name: Publish release
         if: steps.up.outputs.skip == 'false'
@@ -188,8 +221,10 @@ jobs:
           gh release create "$OUR_TAG" "$APK" -R "$GITHUB_REPOSITORY" \
             --title "WaEnhancer $VERSION + Material chat" --notes-file ../notes.md --target main
 
-      - name: Close conflict issues
+      - name: Close conflict and build failure issues
         if: steps.up.outputs.skip == 'false'
         run: |
-          gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$CONFLICT_TITLE_PREFIX\"" --json number --jq '.[].number' \
-            | xargs -r -I{} gh issue close {} -R "$GITHUB_REPOSITORY" -c "Fixed: ${{ steps.up.outputs.our_tag }} published."
+          for PREFIX in "$CONFLICT_TITLE_PREFIX" "$BUILD_FAILURE_TITLE_PREFIX"; do
+            gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$PREFIX\"" --json number --jq '.[].number' \
+              | xargs -r -I{} gh issue close {} -R "$GITHUB_REPOSITORY" -c "Fixed: ${{ steps.up.outputs.our_tag }} published."
+          done

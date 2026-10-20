@@ -1,4 +1,4 @@
-From 59f41ae4441be6206a9c3efbe76e2f591c507bb3 Mon Sep 17 00:00:00 2001
+From 4c1d41ddf8eddf7702d20a78ae1c233f81d3e632 Mon Sep 17 00:00:00 2001
 From: Insanity <emanuele.bonaventura@skylabs.it>
 Date: Mon, 28 Sep 2026 12:58:30 +0200
 Subject: [PATCH 2/2] feat(update): check updates against the
@@ -30,10 +30,10 @@ index be56d6b9..80a4fdf0 100644
          private val httpClient: OkHttpClient by lazy {
              OkHttpClient.Builder()
 diff --git a/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt b/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
-index d460ba7d..a2cfc0a4 100644
+index 76ea2a78..602e5b63 100644
 --- a/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
 +++ b/app/src/main/java/com/wmods/wppenhacer/ui/fragments/HomeFragment.kt
-@@ -119,7 +119,7 @@ class HomeFragment : BaseFragment() {
+@@ -124,7 +124,7 @@ class HomeFragment : BaseFragment() {
  
          binding.updateCard.setOnClickListener { view ->
              animateClick(view)
@@ -42,7 +42,7 @@ index d460ba7d..a2cfc0a4 100644
          }
  
          binding.diagBtn.setOnClickListener { view ->
-@@ -496,7 +496,7 @@ class HomeFragment : BaseFragment() {
+@@ -514,7 +514,7 @@ class HomeFragment : BaseFragment() {
                      .build()
  
                  val request = Request.Builder()

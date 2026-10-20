@@ -1,4 +1,4 @@
-From 5628e30789dba40170b8421f6a5f521be0c46b79 Mon Sep 17 00:00:00 2001
+From ebfd0b9b5886cbc3a1fdb5a0afa575e595710a8d Mon Sep 17 00:00:00 2001
 From: Insanity <emanuele.bonaventura@skylabs.it>
 Date: Mon, 28 Sep 2026 12:34:25 +0200
 Subject: [PATCH 1/2] feat(customization): Material (Google Messages) chat
@@ -12,15 +12,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../wppenhacer/xposed/core/FeatureRegistry.kt |   2 +
  .../features/customization/BubbleColors.kt    |   1 +
- .../features/customization/MaterialChat.kt    | 693 ++++++++++++++++++
+ .../features/customization/MaterialChat.kt    | 689 ++++++++++++++++++
  app/src/main/res/values-it/strings.xml        |   2 +
  app/src/main/res/values/strings.xml           |   2 +
  .../main/res/xml/fragment_customization.xml   |   6 +
- 6 files changed, 706 insertions(+)
+ 6 files changed, 702 insertions(+)
  create mode 100644 app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
 
 diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
-index 9aaebf25..67892f63 100644
+index a4d2b3b8..9e5333a5 100644
 --- a/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
 +++ b/app/src/main/java/com/wmods/wppenhacer/xposed/core/FeatureRegistry.kt
 @@ -1,6 +1,7 @@
@@ -31,7 +31,7 @@ index 9aaebf25..67892f63 100644
  import com.wmods.wppenhacer.xposed.features.customization.ContactVerify
  import com.wmods.wppenhacer.xposed.features.customization.CustomThemeV2
  import com.wmods.wppenhacer.xposed.features.customization.CustomTime
-@@ -79,6 +80,7 @@ internal object FeatureRegistry {
+@@ -83,6 +84,7 @@ internal object FeatureRegistry {
          CustomView::class.java,
          SeenTick::class.java,
          BubbleColors::class.java,
@@ -53,10 +53,10 @@ index 24731a76..b9abd936 100644
              "bubble_left",
 diff --git a/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
 new file mode 100644
-index 00000000..722cfcd6
+index 00000000..bb3d8aae
 --- /dev/null
 +++ b/app/src/main/java/com/wmods/wppenhacer/xposed/features/customization/MaterialChat.kt
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,689 @@
 +package com.wmods.wppenhacer.xposed.features.customization
 +
 +import android.annotation.SuppressLint
@@ -81,14 +81,13 @@ index 00000000..722cfcd6
 +import androidx.core.graphics.ColorUtils
 +import com.google.android.material.color.utilities.Hct
 +import com.google.android.material.color.utilities.TonalPalette
++import com.highcapable.yukihookapi.extension.kavaref.hook
 +import com.wmods.wppenhacer.xposed.core.Feature
 +import com.wmods.wppenhacer.xposed.core.WppCore
 +import com.wmods.wppenhacer.xposed.core.devkit.Unobfuscator
 +import com.wmods.wppenhacer.xposed.utils.DesignUtils
++import com.wmods.wppenhacer.xposed.utils.ReflectionUtils
 +import com.wmods.wppenhacer.xposed.utils.Utils
-+import de.robv.android.xposed.XC_MethodHook
-+import de.robv.android.xposed.XposedBridge
-+import de.robv.android.xposed.XposedHelpers
 +import java.lang.reflect.Method
 +
 +/**
@@ -168,21 +167,20 @@ index 00000000..722cfcd6
 +
 +    /** The voice note seek bar paints dot and waveform itself, without drawables to tint. */
 +    private fun hookVoiceNoteSeekBar() {
-+        val seekBar = XposedHelpers.findClassIfExists(
++        val seekBar = ReflectionUtils.findClassIfExists(
 +            "com.whatsapp.voicerecorder.VoiceNoteSeekBar", classLoader
 +        ) ?: return log("VoiceNoteSeekBar not found")
-+        XposedBridge.hookMethod(findOnDraw(seekBar) ?: return, object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
-+                if (!seekBar.isInstance(param.thisObject)) return
-+                val outgoing = XposedHelpers.getAdditionalInstanceField(param.thisObject, "wae_outgoing") as? Boolean ?: return
++        (findOnDraw(seekBar) ?: return).hook {
++            before {
++                if (!seekBar.isInstance(instance)) return@before
++                val outgoing = ReflectionUtils.getAdditionalInstanceField(instance, "wae_outgoing") as? Boolean ?: return@before
 +                voiceNoteColors = if (outgoing) palette.onOutgoing to palette.onOutgoingVariant
 +                else palette.onIncoming to palette.onIncomingVariant
 +            }
-+
-+            override fun afterHookedMethod(param: MethodHookParam) {
++            after {
 +                voiceNoteColors = null
 +            }
-+        })
++        }
 +    }
 +
 +    /**
@@ -195,36 +193,35 @@ index 00000000..722cfcd6
 +            0x21c063, 0x25d366, 0x1daa61, 0x00a884, 0x1da457, 0x1b864b, 0x008069, // greens
 +            0x53bdeb, 0x027eb5, 0x007bfc, // links
 +        )
-+        XposedHelpers.findAndHookMethod(TextView::class.java, "onDraw", Canvas::class.java, object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
++        TextView::class.java.getDeclaredMethod("onDraw", Canvas::class.java).hook {
++            before {
 +                textDrawDepth++
 +            }
-+
-+            override fun afterHookedMethod(param: MethodHookParam) {
++            after {
 +                textDrawDepth--
 +            }
-+        })
-+        XposedHelpers.findAndHookMethod(Paint::class.java, "setColor", Int::class.javaPrimitiveType, object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
-+                if (!inConversation) return
++        }
++        Paint::class.java.getDeclaredMethod("setColor", Int::class.javaPrimitiveType).hook {
++            before {
++                if (!inConversation) return@before
 +                val voiceColors = voiceNoteColors
 +                if (voiceColors != null) {
 +                    // voice note progress: gray = still to play, colored = played
-+                    val color = param.args[0] as Int
++                    val color = args[0] as Int
 +                    val hsv = FloatArray(3)
 +                    android.graphics.Color.colorToHSV(color, hsv)
 +                    val target = if (hsv[1] < 0.25f) voiceColors.second else voiceColors.first
 +                    val alpha = ((color ushr 24) * (target ushr 24)) / 255
-+                    param.args[0] = (alpha shl 24) or (target and 0xffffff)
-+                    return
++                    args[0] = (alpha shl 24) or (target and 0xffffff)
++                    return@before
 +                }
-+                if (textDrawDepth <= 0) return
-+                val color = param.args[0] as Int
++                if (textDrawDepth <= 0) return@before
++                val color = args[0] as Int
 +                val rgb = color and 0xffffff
-+                if (brandColors.none { it == rgb }) return
-+                param.args[0] = (color and 0xff000000.toInt()) or (palette.accent and 0xffffff)
++                if (brandColors.none { it == rgb }) return@before
++                args[0] = (color and 0xff000000.toInt()) or (palette.accent and 0xffffff)
 +            }
-+        })
++        }
 +    }
 +
 +    private fun View.invalidateRecursive() {
@@ -237,31 +234,31 @@ index 00000000..722cfcd6
 +
 +    private fun hookBubbles() {
 +        // (direction, position in the group, pressed?, ?, ?) -> nine-patch bubble
-+        XposedBridge.hookMethod(Unobfuscator.loadBubbleDrawableMethod(classLoader), object : XC_MethodHook() {
-+            override fun afterHookedMethod(param: MethodHookParam) {
-+                val original = param.result as? Drawable ?: return
-+                if (original is BubbleDrawable) return
-+                val outgoing = param.args[0] as? Int == OUTGOING
-+                param.result = BubbleDrawable(original, outgoing)
++        Unobfuscator.loadBubbleDrawableMethod(classLoader).hook {
++            after {
++                val original = result as? Drawable ?: return@after
++                if (original is BubbleDrawable) return@after
++                val outgoing = args[0] as? Int == OUTGOING
++                result = BubbleDrawable(original, outgoing)
 +            }
-+        })
++        }
 +
-+        XposedBridge.hookMethod(Unobfuscator.loadBallonDateDrawable(classLoader), object : XC_MethodHook() {
-+            override fun afterHookedMethod(param: MethodHookParam) {
-+                val drawable = param.result as? Drawable ?: return
++        Unobfuscator.loadBallonDateDrawable(classLoader).hook {
++            after {
++                val drawable = result as? Drawable ?: return@after
 +                drawable.colorFilter = PorterDuffColorFilter(
-+                    bubbleColor(param.args[0] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
++                    bubbleColor(args[0] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
 +                )
 +            }
-+        })
-+        XposedBridge.hookMethod(Unobfuscator.loadBallonBorderDrawable(classLoader), object : XC_MethodHook() {
-+            override fun afterHookedMethod(param: MethodHookParam) {
-+                val drawable = param.result as? Drawable ?: return
++        }
++        Unobfuscator.loadBallonBorderDrawable(classLoader).hook {
++            after {
++                val drawable = result as? Drawable ?: return@after
 +                drawable.colorFilter = PorterDuffColorFilter(
-+                    bubbleColor(param.args[1] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
++                    bubbleColor(args[1] as? Int == OUTGOING), PorterDuff.Mode.SRC_IN
 +                )
 +            }
-+        })
++        }
 +    }
 +
 +    private fun findOnDraw(start: Class<*>): Method? {
@@ -279,12 +276,12 @@ index 00000000..722cfcd6
 +
 +    /** "Scroll to bottom" round button: a ViewStub, inflated the first time the chat scrolls. */
 +    private fun hookScrollButton() {
-+        XposedHelpers.findAndHookMethod(android.view.ViewStub::class.java, "inflate", object : XC_MethodHook() {
-+            override fun afterHookedMethod(param: MethodHookParam) {
-+                val view = param.result as? View ?: return
++        android.view.ViewStub::class.java.getDeclaredMethod("inflate").hook {
++            after {
++                val view = result as? View ?: return@after
 +                if (view.id == scrollBottomId) styleScrollButton(view)
 +            }
-+        })
++        }
 +    }
 +
 +    private fun styleScrollButton(button: View) {
@@ -327,18 +324,17 @@ index 00000000..722cfcd6
 +        val rowClass = Unobfuscator.loadConversationRowClass(classLoader) ?: return
 +        val onDraw = findOnDraw(rowClass) ?: return log("row onDraw not found")
 +        logDebug("row onDraw", onDraw)
-+        XposedBridge.hookMethod(onDraw, object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
-+                val row = param.thisObject as View
++        onDraw.hook {
++            before {
++                val row = instance as View
 +                BubbleDrawable.drawingRow = row
 +                styleTicks(row)
 +                styleActionButton(row)
 +            }
-+
-+            override fun afterHookedMethod(param: MethodHookParam) {
++            after {
 +                BubbleDrawable.drawingRow = null
 +            }
-+        })
++        }
 +
 +        // WhatsApp pads every row itself: a large value where a run of messages from the same
 +        // sender starts or ends, a tiny one on the joined sides. Widen only the joined sides: the
@@ -346,18 +342,18 @@ index 00000000..722cfcd6
 +        val row = onDraw.declaringClass
 +        val joinedMax = Utils.dipToPixels(3f)
 +        val extra = BubbleDrawable.joinSpacing
-+        val paddingHook = object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
-+                if (!row.isInstance(param.thisObject)) return
-+                for (i in intArrayOf(1, 3)) {
-+                    val value = param.args[i] as Int
-+                    if (value in 0..joinedMax) param.args[i] = value + extra
++        val int = Int::class.javaPrimitiveType
++        for (name in arrayOf("setPadding", "setPaddingRelative")) {
++            View::class.java.getDeclaredMethod(name, int, int, int, int).hook {
++                before {
++                    if (!row.isInstance(instance)) return@before
++                    for (i in intArrayOf(1, 3)) {
++                        val value = args[i] as Int
++                        if (value in 0..joinedMax) args[i] = value + extra
++                    }
 +                }
 +            }
 +        }
-+        val int = Int::class.javaPrimitiveType
-+        XposedHelpers.findAndHookMethod(View::class.java, "setPadding", int, int, int, int, paddingHook)
-+        XposedHelpers.findAndHookMethod(View::class.java, "setPaddingRelative", int, int, int, int, paddingHook)
 +    }
 +
 +    /**
@@ -365,25 +361,25 @@ index 00000000..722cfcd6
 +     * paint it as the Messages sheet, a surface panel with rounded top corners on the frame color.
 +     */
 +    private fun hookWallpaper() {
-+        val wallpaperClass = XposedHelpers.findClassIfExists(
++        val wallpaperClass = ReflectionUtils.findClassIfExists(
 +            "com.whatsapp.ui.wds.components.wallpaper.WDSWallpaper", classLoader
 +        ) ?: return log("WDSWallpaper not found")
 +        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 +        val rect = RectF()
 +        val radius = Utils.dipToPixels(28f).toFloat()
-+        XposedBridge.hookMethod(findOnDraw(wallpaperClass) ?: return, object : XC_MethodHook() {
-+            override fun beforeHookedMethod(param: MethodHookParam) {
-+                if (!wallpaperClass.isInstance(param.thisObject)) return
-+                val view = param.thisObject as View
-+                val canvas = param.args[0] as Canvas
++        (findOnDraw(wallpaperClass) ?: return).hook {
++            before {
++                if (!wallpaperClass.isInstance(instance)) return@before
++                val view = instance as View
++                val canvas = args[0] as Canvas
 +                canvas.drawColor(palette.frame)
 +                paint.color = palette.surface
 +                // extend below the view so only the top corners are rounded
 +                rect.set(0f, 0f, view.width.toFloat(), view.height + radius)
 +                canvas.drawRoundRect(rect, radius, radius, paint)
-+                param.result = null
++                result = null
 +            }
-+        })
++        }
 +    }
 +
 +    private fun styleConversation(activity: Activity) {
@@ -455,7 +451,7 @@ index 00000000..722cfcd6
 +        // every tab list (chats, updates, calls...) sits on the sheet
 +        (find("pager") as? android.view.ViewGroup)?.let { pager ->
 +            val lists = ArrayList<View>()
-+            pager.findViewsWithType(XposedHelpers.findClass("androidx.recyclerview.widget.RecyclerView", classLoader), lists)
++            pager.findViewsWithType(ReflectionUtils.findClass("androidx.recyclerview.widget.RecyclerView", classLoader), lists)
 +            for (list in lists) {
 +                if ((list.background as? SheetDrawable)?.sheetColor != palette.surface) list.background = SheetDrawable(palette.surface)
 +                // containers between the pager and the list show through above and below the sheet
@@ -684,8 +680,8 @@ index 00000000..722cfcd6
 +            }
 +            // the seek bar paints itself: tell its onDraw hook which bubble it sits in
 +            player.findViewById<View>(audioSeekbarId)?.let {
-+                if (XposedHelpers.getAdditionalInstanceField(it, "wae_outgoing") != outgoing) {
-+                    XposedHelpers.setAdditionalInstanceField(it, "wae_outgoing", outgoing)
++                if (ReflectionUtils.getAdditionalInstanceField(it, "wae_outgoing") != outgoing) {
++                    ReflectionUtils.setAdditionalInstanceField(it, "wae_outgoing", outgoing)
 +                    it.invalidate()
 +                }
 +            }
@@ -751,7 +747,7 @@ index 00000000..722cfcd6
 +    }
 +}
 diff --git a/app/src/main/res/values-it/strings.xml b/app/src/main/res/values-it/strings.xml
-index 31d86dbe..f5f4a9fc 100644
+index b734624a..eb7c5ae7 100644
 --- a/app/src/main/res/values-it/strings.xml
 +++ b/app/src/main/res/values-it/strings.xml
 @@ -35,6 +35,8 @@
@@ -764,7 +760,7 @@ index 31d86dbe..f5f4a9fc 100644
      <string name="restart_whatsapp">Riavvia WhatsApp</string>
      <string name="conversation">Conversazione</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 61a0c95a..04863ed3 100644
+index 9f6f5f94..ecdaee24 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -37,6 +37,8 @@
